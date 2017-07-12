@@ -2,18 +2,18 @@
 include('../twoauth/autoload.php');
 use Abraham\TwitterOAuth\TwitterOAuth;
 
+include("vars.php");
+
+// local files to write
 $file = "lehti.jpeg";
 $file_json = "lehti.json";
 $file_result = "uusi.jpeg";
 
-$tw_consumer_key = "";
-$tw_consumer_secret = "";
-$tw_user_token = "";
-$tw_user_secret = "";
-
+// debug vars
 $debug_fetch_paper = true;
 $debug_fetch_image = true;
 
+// hae satunnainen lehti
 function getPaper($save_as = "lehti.json"){
   $paper = rand(613976, 1290000);
   $url = "https://digi.kansalliskirjasto.fi/rest/binding?id=".$paper;
@@ -21,10 +21,11 @@ function getPaper($save_as = "lehti.json"){
   file_put_contents($save_as, $server_output);
 }
 
+// tee lyhyt linkki
 function makeBitLyLink($url){
+  global $bit_ly_api_key, $bitly_user;
   $result = null;
-  $bit_ly_api_key = "";
-  $url = "http://api.bit.ly/shorten?version=2.0.1&longUrl=".$url."&login=duukkis&apiKey=".$bit_ly_api_key;
+  $url = "http://api.bit.ly/shorten?version=2.0.1&longUrl=".$url."&login=".$bitly_user."&apiKey=".$bit_ly_api_key;
   $new_link = file_get_contents($url);
   $json = json_decode($new_link);
   if($json->errorCode == 0){
@@ -35,11 +36,13 @@ function makeBitLyLink($url){
   return $result;
 }
 
+// hae sivu anna headerit kansalliskirjastolle
 function getPage($url, $binary = false){
   $headers = [
       'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Cache-Control: no-cache',
       'User-Agent: Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.13) Gecko/20080311 Firefox/2.0.0.13',
+      'Whoami: Twitter-bot @lehtibot - tekijä @duukkis',
   ];
   if($binary){
     $opts = [
@@ -61,35 +64,36 @@ function getPage($url, $binary = false){
   return $server_output;
 }
 
-if($debug_fetch_paper){
-  getPaper($file_json);  
-}
-$c = file_get_contents($file_json);
-$data = json_decode($c);
-// print_r($data);
-if($data === null || $data === null){
-  die("page failed");
-}
+// looppaa kunnes löytyy lehti
+do{
+  if($debug_fetch_paper){
+    getPaper($file_json);  
+  }
+  $c = file_get_contents($file_json);
+  $data = json_decode($c);
+  sleep(1);
+} while($data === null);
 
-$sivu = rand(0,3);
+// poimi satunnainen sivu
+$sivu = rand(0,9);
 switch($sivu){
   case 0:
-  case 1:
-    // etusivu
-    $getpage = 0;
-    break;
-  case 2:
     // joku välisivu
     $getpage = rand(1,count($data->pages)-2);
     break;
-  case 3:
+  case 1:
     // viim sivu
     $getpage = count($data->pages)-1;
+    break;
+  default:
+    // etusivu
+    $getpage = 0;
     break;
 }
 // print_r($data->pages);
 $kuva = "http://digi.kansalliskirjasto.fi".$data->pages[$getpage]->imageUri;
 print $kuva."\n";
+// hae kuva
 if($debug_fetch_image){
   $image = getPage($kuva, true);
   file_put_contents($file, $image);
@@ -107,7 +111,7 @@ $jump = 5;
 
 $linesx = array();
 $linesy = array();
-// vertical
+// etsi viivoja unohda reunat (10px)
 for($x = 10;$x < $width_old-10;$x++){
   $pcount = 0;
   $xstart = null;
@@ -142,7 +146,7 @@ for($x = 10;$x < $width_old-10;$x++){
   }
 }
 
-// horizontal
+// etsi viivoja unohda reunat (10 px)
 for($y = 10;$y < $height_old-10;$y++){
   $pcount = 0;
   $xstart = null;
@@ -182,6 +186,7 @@ for($y = 10;$y < $height_old-10;$y++){
 
 $iterations = 0;
 
+// poimi satunnainen piste ja etsi viivat sen ympäriltä x iteraatiota
 do{
   $randY = rand(500, $height_old-500);
   $randX = rand(300, $width_old-300);
@@ -217,6 +222,7 @@ do{
   }
 
   $iterations++;
+  // poimi laatikko + hieman lisää tilaa
   $box = array(
     "randX" => $randX,
     "randY" => $randY,
@@ -228,7 +234,7 @@ do{
   );
   $newW = $box["x2"]-$box["x1"];
   $newH = $box["y2"]-$box["y1"];
-} while( ($newW > 800 || $newH > 800) && $iterations < 20);
+} while( ($newW > 800 || $newH > 800) && $iterations < 40);
 
 print_r( $box );
 
@@ -237,8 +243,8 @@ print_r( $box );
 // $lines = array_merge($linesx, $linesy);
 
 
-if($iterations < 20){
-
+if($iterations < 40){
+  // do the magic
   $image_resized = imagecreatetruecolor($newW, $newH);
   imagecopyresized($image_resized, $image, 0, 0, $box["x1"], $box["y1"], $newW, $newH, $newW, $newH);
   imagedestroy($image);
@@ -246,9 +252,9 @@ if($iterations < 20){
   imagejpeg($image_resized, $file_result);
   imagedestroy($image_resized);
 
-  $link = makeBitLyLink(urlencode("http://digi.kansalliskirjasto.fi/sanomalehti/binding/".$data->id."?page=".$getpage.""));
+  $link = makeBitLyLink(urlencode("http://digi.kansalliskirjasto.fi/sanomalehti/binding/".$data->id."?page=".($getpage+1).""));
 
-  $tweet = $data->title.", s.".$getpage." ".$link." Kansalliskirjaston Digitoidut aineistot";
+  $tweet = $data->title.", s.".($getpage+1)." ".$link."\nKansalliskirjaston Digitoidut aineistot";
 
   print $tweet."\n";
 
