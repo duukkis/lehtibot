@@ -2,23 +2,49 @@
 include('../twoauth/autoload.php');
 use Abraham\TwitterOAuth\TwitterOAuth;
 
+/**
+* vars
+* $bit_ly_api_key
+* $bitly_user
+* $tw_consumer_key
+* $tw_consumer_secret
+* $tw_user_token
+* $tw_user_secret
+*/
 include("vars.php");
 
-// local files to write
+//----------- local files to write (for debugging)
 $file = "lehti.jpeg";
 $file_json = "lehti.json";
 $file_result = "uusi.jpeg";
 
-// debug vars
-$debug_fetch_paper = true;
-$debug_fetch_image = true;
+//------------ debug vars
+$fetch_paper = true;
+$fetch_image = true;
+$make_bit_ly_link = true;
+$tweet_for_real = true;
 
-// hae satunnainen lehti
+//------------ rajoita laatikon koko tähän
+$box_size_limit_w = 900;
+$box_size_limit_h = 600;
+
+
+// hae satunnainen lehti ja kirjoita se levylle
 function getPaper($save_as = "lehti.json"){
-  $paper = rand(613976, 1290000);
-  $url = "https://digi.kansalliskirjasto.fi/rest/binding?id=".$paper;
-  $server_output = getPage($url);
-  file_put_contents($save_as, $server_output);
+  $tries = 0;
+  do{
+    sleep(1);
+    $paper = rand(613976, 1290000);
+    $url = "https://digi.kansalliskirjasto.fi/rest/binding?id=".$paper;
+    $server_output = getPage($url);
+    $tries++;
+  } while($server_output == null && $tries < 5);
+
+  if(!empty($server_output)){
+    file_put_contents($save_as, $server_output);
+    return true;
+  }
+  return false;
 }
 
 // tee lyhyt linkki
@@ -36,72 +62,65 @@ function makeBitLyLink($url){
   return $result;
 }
 
-// hae sivu anna headerit kansalliskirjastolle
-function getPage($url, $binary = false){
+// hae sivu, (with headers)
+function getPage($url){
   $headers = [
       'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Cache-Control: no-cache',
       'User-Agent: Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.13) Gecko/20080311 Firefox/2.0.0.13',
       'Whoami: Twitter-bot @lehtibot - tekijä @duukkis',
   ];
-  if($binary){
-    $opts = [
-        "http" => [
-            "method" => "GET",
-            "header" => implode("\r\n", $headers)
-        ]
-    ];
-    $context = stream_context_create($opts);
-    return file_get_contents($url, false, $context);
+  $opts = [
+      "http" => [
+          "method" => "GET",
+          "header" => implode("\r\n", $headers)
+      ]
+  ];
+  $context = stream_context_create($opts);
+  $response = file_get_contents($url, false, $context);
+  if($http_response_header[0] == "HTTP/1.1 401"){
+    return null;
   }
-  $ch = curl_init();
-  curl_setopt($ch, CURLOPT_URL, $url);
-  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-  
-  curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-  $server_output = curl_exec($ch);
-  curl_close($ch);
-  return $server_output;
+  return $response;
 }
 
 // looppaa kunnes löytyy lehti
-do{
-  if($debug_fetch_paper){
-    getPaper($file_json);  
+if($fetch_paper){
+  $paperResult = getPaper($file_json);
+  if(!$paperResult){
+    die("no paper found!");
   }
-  $c = file_get_contents($file_json);
-  $data = json_decode($c);
-  sleep(1);
-} while($data === null);
+}
+$c = file_get_contents($file_json);
+$data = json_decode($c);
 
-// poimi satunnainen sivu
+// poimi satunnainen sivu, painotus etusivulla
 $sivu = rand(0,9);
 switch($sivu){
   case 0:
     // joku välisivu
-    $getpage = rand(1,count($data->pages)-2);
+    $poimisivu = rand(1,count($data->pages)-2);
     break;
   case 1:
     // viim sivu
-    $getpage = count($data->pages)-1;
+    $poimisivu = count($data->pages)-1;
     break;
   default:
     // etusivu
-    $getpage = 0;
+    $poimisivu = 0;
     break;
 }
-// print_r($data->pages);
-$kuva = "http://digi.kansalliskirjasto.fi".$data->pages[$getpage]->imageUri;
+$kuva = "http://digi.kansalliskirjasto.fi".$data->pages[$poimisivu]->imageUri;
 print $kuva."\n";
+
 // hae kuva
-if($debug_fetch_image){
-  $image = getPage($kuva, true);
+if($fetch_image){
+  $image = getPage($kuva);
   file_put_contents($file, $image);
 }
 // print $kuva;
 
 // -------------------- image handling
-
 $info = getimagesize($file);
 $image = imagecreatefromjpeg($file);
 list($width_old, $height_old) = $info;
@@ -111,7 +130,8 @@ $jump = 5;
 
 $linesx = array();
 $linesy = array();
-// etsi viivoja unohda reunat (10px)
+
+// etsi viivoja unohda reunat
 for($x = 10;$x < $width_old-10;$x++){
   $pcount = 0;
   $xstart = null;
@@ -146,7 +166,7 @@ for($x = 10;$x < $width_old-10;$x++){
   }
 }
 
-// etsi viivoja unohda reunat (10 px)
+// etsi viivoja unohda reunat
 for($y = 10;$y < $height_old-10;$y++){
   $pcount = 0;
   $xstart = null;
@@ -181,70 +201,93 @@ for($y = 10;$y < $height_old-10;$y++){
   }
 }
 
-// linesx pystyviivat
-// linesy vaakaviivat
-
-$iterations = 0;
-
-// poimi satunnainen piste ja etsi viivat sen ympäriltä x iteraatiota
-do{
-  $randY = rand(500, $height_old-500);
-  $randX = rand(300, $width_old-300);
-
-  /*$randY = 1400;
-  $randX = 2600;
-  */
-
-  $topy = $height_old;
-  $boty = $height_old;
+/**
+* Etsi laatikko pisteen x_coord,y_coord ympäriltä
+* @param int $x_coord
+* @param int $y_coord
+* @param array $linesx - pystyviivat
+* @param array $linesy - vaakaviivat
+* @param int $width - kuvan leveys
+* @param int $height - kuvan korkeus
+* @return array("x1" => int, "y1" => int, "x2" => int, "y2" => int)
+*/
+function findBox($x_coord, $y_coord, $linesx, $linesy, $width, $height){
+  $topy = $height;
+  $boty = $height;
   foreach($linesy AS $k => $line){
-    if($line["xstart"] < $randX && $line["xend"] > $randX && $randY > $line["ystart"] && ($randY-$line["ystart"]) < $topy){
-      $topy = ($randY-$line["ystart"]);
+    if($line["xstart"] < $x_coord && $line["xend"] > $x_coord && $y_coord > $line["ystart"] && ($y_coord-$line["ystart"]) < $topy){
+      $topy = ($y_coord-$line["ystart"]);
       // print $line["ystart"]." topY \n";
     }
-    if($line["xstart"] < $randX && $line["xend"] > $randX && $randY < $line["ystart"] && ($line["ystart"]-$randY) < $boty){
-      $boty = ($line["ystart"]-$randY);
+    if($line["xstart"] < $x_coord && $line["xend"] > $x_coord && $y_coord < $line["ystart"] && ($line["ystart"]-$y_coord) < $boty){
+      $boty = ($line["ystart"]-$y_coord);
       // print $line["ystart"]." botY \n";
     }
   }
 
-  $leftx = $width_old;
-  $rightx = $width_old;
+  $leftx = $width;
+  $rightx = $width;
   foreach($linesx AS $k => $line){
-    if($line["ystart"] < $randY && $line["yend"] > $randY && $line["xstart"] < $randX && ($randX-$line["xstart"]) < $leftx){
-      $leftx = ($randX-$line["xstart"]);
+    if($line["ystart"] < $y_coord && $line["yend"] > $y_coord && $line["xstart"] < $x_coord && ($x_coord-$line["xstart"]) < $leftx){
+      $leftx = ($x_coord-$line["xstart"]);
       // print $line["xstart"]." leftX \n";
     }
-    if($line["ystart"] < $randY && $line["yend"] > $randY && $line["xstart"] > $randX && ($line["xstart"]-$randX) < $rightx){
-      $rightx = ($line["xstart"]-$randX);
+    if($line["ystart"] < $y_coord && $line["yend"] > $y_coord && $line["xstart"] > $x_coord && ($line["xstart"]-$x_coord) < $rightx){
+      $rightx = ($line["xstart"]-$x_coord);
       // print $line["xstart"]." rightX \n";
     }
   }
-
-  $iterations++;
-  // poimi laatikko + hieman lisää tilaa
   $box = array(
-    "randX" => $randX,
-    "randY" => $randY,
-    "iterations" => $iterations,
-    "x1" => max(0, $randX-$leftx-6),
-    "y1" => max(0, $randY-$topy-6),
-    "x2" => min($width_old, $randX+$rightx+6),
-    "y2" => min($height_old, $randY+$boty+6),
+    "x1" => max(0, $x_coord-$leftx),
+    "y1" => max(0, $y_coord-$topy),
+    "x2" => min($width, $x_coord+$rightx),
+    "y2" => min($height, $y_coord+$boty),
   );
+  return $box;
+}
+
+/**
+* onko piste jonkin laatikon sisällä
+* @param array $boxes
+* @param int $x
+* @param int $y
+* @return boolean
+*/
+function isInBox($boxes, $x, $y){
+  if(!empty($boxes)){    
+    foreach($boxes AS $k => $box){
+      if($box["x1"] < $x && $box["x2"] > $x && $box["y1"] < $y && $box["y2"] > $y){
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+//------------- etsi kaikki laatikot ja poimi niistä sopivat
+$boxes = array();
+$step = 100;
+for($i = $step;$i < $width_old;$i = $i+$step){
+  for($j = $step;$j < $height_old;$j = $j+$step){
+    if(!isInBox($boxes, $i, $j)){
+      $box = findBox($i, $j, $linesx, $linesy, $width_old, $height_old);
+      $boxw = $box["x2"]-$box["x1"];
+      $boxh = $box["y2"]-$box["y1"];
+      if($boxw < $box_size_limit_w && $boxh < $box_size_limit_h){
+        array_push($boxes, $box);
+      }
+    }
+  }
+}
+
+// onko bokseja?
+if(!empty($boxes)){
+  $random_box = rand(0,count($boxes)-1);
+
+  $box = $boxes[$random_box];
   $newW = $box["x2"]-$box["x1"];
   $newH = $box["y2"]-$box["y1"];
-} while( ($newW > 800 || $newH > 800) && $iterations < 40);
-
-print_r( $box );
-
-
-
-// $lines = array_merge($linesx, $linesy);
-
-
-if($iterations < 40){
-  // do the magic
+  // crop the big image
   $image_resized = imagecreatetruecolor($newW, $newH);
   imagecopyresized($image_resized, $image, 0, 0, $box["x1"], $box["y1"], $newW, $newH, $newW, $newH);
   imagedestroy($image);
@@ -252,19 +295,22 @@ if($iterations < 40){
   imagejpeg($image_resized, $file_result);
   imagedestroy($image_resized);
 
-  $link = makeBitLyLink(urlencode("http://digi.kansalliskirjasto.fi/sanomalehti/binding/".$data->id."?page=".($getpage+1).""));
-
-  $tweet = $data->title.", s.".($getpage+1)." ".$link."\nKansalliskirjaston Digitoidut aineistot";
-
+  $link = "http://digi.kansalliskirjasto.fi/sanomalehti/binding/".$data->id."?page=".($poimisivu+1)."";
+  if ($make_bit_ly_link) {
+    $link = makeBitLyLink(urlencode($link));
+  }
+  $tweet = $data->title.", s.".($poimisivu+1)."\n".$link."\nKansalliskirjasto";
   print $tweet."\n";
 
-  $connection = new TwitterOAuth($tw_consumer_key, $tw_consumer_secret, $tw_user_token, $tw_user_secret);
-  $connection->setTimeouts(10,15);
+  if ($tweet_for_real) {
+    $connection = new TwitterOAuth($tw_consumer_key, $tw_consumer_secret, $tw_user_token, $tw_user_secret);
+    $connection->setTimeouts(10,15);
 
-  $media1 = $connection->upload('media/upload', ['media' => $file_result]);
-  $parameters = [
-    'status' => $tweet,
-    'media_ids' => implode(',', [$media1->media_id_string])
-  ];
-  $code = $connection->post('statuses/update', $parameters);
+    $media1 = $connection->upload('media/upload', ['media' => $file_result]);
+    $parameters = [
+      'status' => $tweet,
+      'media_ids' => implode(',', [$media1->media_id_string])
+    ];
+    $code = $connection->post('statuses/update', $parameters);
+  }
 }
