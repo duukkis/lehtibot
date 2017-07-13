@@ -25,9 +25,10 @@ $make_bit_ly_link = true;
 $tweet_for_real = true;
 
 //------------ rajoita laatikon koko tähän
-$box_size_limit_w = 900;
-$box_size_limit_h = 600;
-
+$box_size_min_w = 300;
+$box_size_min_h = 300;
+$box_size_max_w = 900;
+$box_size_max_h = 600;
 
 // hae satunnainen lehti ja kirjoita se levylle
 function getPaper($save_as = "lehti.json"){
@@ -273,7 +274,7 @@ for($i = $step;$i < $width_old;$i = $i+$step){
       $box = findBox($i, $j, $linesx, $linesy, $width_old, $height_old);
       $boxw = $box["x2"]-$box["x1"];
       $boxh = $box["y2"]-$box["y1"];
-      if($boxw < $box_size_limit_w && $boxh < $box_size_limit_h){
+      if($boxw < $box_size_max_w && $boxh < $box_size_max_h && $boxw > $box_size_min_w && $boxh > $box_size_min_h){
         array_push($boxes, $box);
       }
     }
