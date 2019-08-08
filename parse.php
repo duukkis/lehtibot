@@ -33,13 +33,18 @@ $box_size_max_h = 600;
 // hae satunnainen lehti ja kirjoita se levylle
 function getPaper($save_as = "lehti.json"){
   $tries = 0;
+  $isAvailable = false;
   do{
     sleep(1);
     $paper = rand(613976, 1290000);
     $url = "https://digi.kansalliskirjasto.fi/rest/binding?id=".$paper;
     $server_output = getPage($url);
+    if($server_output == null){
+      $data = json_decode($server_output);
+      $isAvailable = !$data->bindingInformation->restrictedMaterial;
+    }
     $tries++;
-  } while($server_output == null && $tries < 5);
+  } while($server_output == null && $tries < 5 && !$isAvailable);
 
   if(!empty($server_output)){
     file_put_contents($save_as, $server_output);
@@ -100,18 +105,18 @@ $sivu = rand(0,9);
 switch($sivu){
   case 0:
     // joku välisivu
-    $poimisivu = rand(1,count($data->pages)-2);
+    $poimisivu = rand(1,count($data->bindingInformation->pages)-2);
     break;
   case 1:
     // viim sivu
-    $poimisivu = count($data->pages)-1;
+    $poimisivu = count($data->bindingInformation->pages)-1;
     break;
   default:
     // etusivu
     $poimisivu = 0;
     break;
 }
-$kuva = "http://digi.kansalliskirjasto.fi".$data->pages[$poimisivu]->imageUri;
+$kuva = "http://digi.kansalliskirjasto.fi".$data->bindingInformation->pages[$poimisivu]->imageUri;
 print $kuva."\n";
 
 // hae kuva
@@ -296,11 +301,11 @@ if(!empty($boxes)){
   imagejpeg($image_resized, $file_result);
   imagedestroy($image_resized);
 
-  $link = "http://digi.kansalliskirjasto.fi/sanomalehti/binding/".$data->id."?page=".($poimisivu+1)."";
+  $link = "http://digi.kansalliskirjasto.fi/sanomalehti/binding/".$data->bindingInformation->id."?page=".($poimisivu+1)."";
   if ($make_bit_ly_link) {
     $link = makeBitLyLink(urlencode($link));
   }
-  $tweet = $data->title.", s.".($poimisivu+1)."\n".$link."\nKansalliskirjasto";
+  $tweet = $data->bindingInformation->title.", s.".($poimisivu+1)."\n".$link."\nKansalliskirjasto";
   print $tweet."\n";
 
   if ($tweet_for_real) {
